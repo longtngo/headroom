@@ -9,7 +9,6 @@ from headroom.observable_memory.store import (
     SQLiteObservationStore,
 )
 
-
 # ── InMemoryObservationStore ──────────────────────────────────────────────────
 
 
