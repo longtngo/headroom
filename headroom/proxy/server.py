@@ -85,6 +85,7 @@ from headroom.config import (
 from headroom.dashboard import get_dashboard_html
 from headroom.providers import AnthropicProvider, OpenAIProvider
 from headroom.proxy.memory_handler import MemoryConfig, MemoryHandler
+from headroom.proxy.observable_memory_handler import ObservableMemoryHandler, ProxyLLMBridge
 from headroom.telemetry import get_telemetry_collector
 from headroom.telemetry.toin import get_toin
 from headroom.tokenizers import get_tokenizer
@@ -320,9 +321,22 @@ class ProxyConfig:
     memory_bridge_md_format: str = "auto"
     memory_bridge_auto_import: bool = False
     memory_bridge_export_path: str = ""
+    # Observable Memory (proactive background compression via Observer/Reflector agents)
+    observable_memory_enabled: bool = False
+    observable_memory_observer_model: str | None = None   # defaults to upstream model
+    observable_memory_reflector_model: str | None = None  # defaults to observer model
+    observable_memory_db_path: str = ":memory:"
+    observable_memory_message_threshold_ratio: float = 0.25
+    observable_memory_observation_threshold_ratio: float = 0.35
+    observable_memory_instruction: str | None = None
+    observable_memory_observer_api_key: str | None = None  # for cross-provider observer
 
     # Compression Hooks (for SaaS and advanced customization)
     hooks: Any = None  # CompressionHooks instance, or None for default behavior
+
+
+#: Alias for :class:`ProxyConfig` used in Observable Memory integration.
+HeadroomProxyConfig = ProxyConfig
 
 
 # =============================================================================
@@ -1254,6 +1268,26 @@ class HeadroomProxy:
                 bridge_export_path=config.memory_bridge_export_path,
             )
             self.memory_handler = MemoryHandler(memory_config)
+
+        # Observable Memory Handler (proactive background compression)
+        self.observable_memory_handler: ObservableMemoryHandler | None = None
+        if config.observable_memory_enabled:
+            from headroom.observable_memory import ObservableMemoryConfig
+
+            om_config = ObservableMemoryConfig(
+                enabled=True,
+                observer_model=config.observable_memory_observer_model,
+                reflector_model=config.observable_memory_reflector_model,
+                db_path=config.observable_memory_db_path,
+                message_threshold_ratio=config.observable_memory_message_threshold_ratio,
+                observation_threshold_ratio=config.observable_memory_observation_threshold_ratio,
+                instruction=config.observable_memory_instruction,
+            )
+            om_api_key = config.observable_memory_observer_api_key or getattr(config, "api_key", "")
+            om_bridge = ProxyLLMBridge(api_key=om_api_key)
+            self.observable_memory_handler = ObservableMemoryHandler(
+                config=om_config, llm=om_bridge
+            )
 
     def _setup_llmlingua(self, config: ProxyConfig, transforms: list) -> str:
         """Set up LLMLingua compression if enabled.

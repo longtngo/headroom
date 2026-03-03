@@ -358,3 +358,26 @@ class TestObservableMemoryHandler:
         assert len(proc.observe_calls) == 1
         assert proc.observe_calls[0]["thread_id"] == "thread-1"
         assert proc.observe_calls[0]["model"] == "claude-opus-4-6"
+
+
+class TestProxyConfig:
+
+    def test_observable_memory_disabled_by_default(self):
+        from headroom.proxy.server import HeadroomProxyConfig
+        config = HeadroomProxyConfig()
+        assert config.observable_memory_enabled is False
+
+    def test_observable_memory_config_fields_exist(self):
+        from headroom.proxy.server import HeadroomProxyConfig
+        config = HeadroomProxyConfig(
+            observable_memory_enabled=True,
+            observable_memory_observer_model="claude-haiku-4-5-20251001",
+            observable_memory_db_path="/tmp/om.db",
+            observable_memory_message_threshold_ratio=0.3,
+            observable_memory_observation_threshold_ratio=0.4,
+            observable_memory_instruction="Focus on errors.",
+            observable_memory_observer_api_key="sk-other",
+        )
+        assert config.observable_memory_enabled is True
+        assert config.observable_memory_observer_model == "claude-haiku-4-5-20251001"
+        assert config.observable_memory_db_path == "/tmp/om.db"
