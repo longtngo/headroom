@@ -4303,7 +4303,8 @@ class HeadroomProxy:
         if tools is not None:
             body["tools"] = tools
 
-        # Observable Memory: inject stored observations into system prompt
+        # Observable Memory: inject stored observations into system prompt.
+        # NOTE: inject_observations must run AFTER body["messages"] is set — it mutates body["messages"] directly.
         # NOTE: schedule_observe is only wired for the non-streaming direct OpenAI path.
         om_thread_id: str | None = None
         if self.observable_memory_handler:
