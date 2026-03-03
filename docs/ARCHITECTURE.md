@@ -1110,7 +1110,8 @@ headroom/
 │   └── jsonl.py         # JSON Lines implementation
 │
 ├── proxy/
-│   └── server.py        # Production HTTP proxy (CCR endpoints)
+│   ├── server.py                      # Production HTTP proxy (CCR endpoints)
+│   └── observable_memory_handler.py   # Observable Memory proxy wiring (thread ID, inject/observe)
 │
 ├── observable_memory/   # Proactive background compression (Observer/Reflector agents)
 │   ├── __init__.py          # Public API surface
@@ -1140,7 +1141,7 @@ Works with ANY OpenAI-compatible API:
 - Local models (Ollama)
 
 ### 2. Deterministic Transforms
-No LLM calls for compression. Everything is:
+Core compression uses no LLM calls. Everything is:
 - Statistical analysis
 - Pattern matching
 - Rule-based
@@ -1149,6 +1150,8 @@ This means:
 - Predictable results
 - Fast (<10ms overhead)
 - No added API costs
+
+**Exception — Observable Memory (opt-in):** When `--observable-memory` is enabled, the proxy runs Observer/Reflector LLM agents in the background to proactively compress message history. This is intentionally opt-in because it adds LLM cost and latency. The deterministic transform pipeline still runs first; Observable Memory is a complementary layer, not a replacement.
 
 ### 3. Safety First
 - Never modify user/assistant TEXT content
