@@ -15,9 +15,9 @@ Usage:
 from __future__ import annotations
 
 import asyncio
-import hashlib  # noqa: F401 — used by thread ID resolution (Task 2)
+import hashlib
 import logging
-from typing import Any  # noqa: F401 — used by thread ID resolution (Task 2)
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -160,6 +160,14 @@ class ObservableMemoryHandler:
 
         self._proc = ObservableMemoryProcessor(config=config, llm=llm)
 
+    @staticmethod
+    def _append_memory_block(existing: str | list | Any, block: str) -> str | list:
+        """Append a memory block to existing system content (str or list of blocks)."""
+        if isinstance(existing, list):
+            return existing + [{"type": "text", "text": block}]
+        existing_str = existing if isinstance(existing, str) else ""
+        return f"{existing_str}\n\n{block}".strip() if existing_str else block
+
     async def inject_observations(
         self,
         thread_id: str,
@@ -183,15 +191,12 @@ class ObservableMemoryHandler:
 
         if provider == "anthropic":
             existing = body.get("system", "")
-            if existing:
-                body["system"] = f"{existing}\n\n{block}"
-            else:
-                body["system"] = block
+            body["system"] = self._append_memory_block(existing, block)
         else:  # openai
             messages = body.get("messages", [])
             for i, msg in enumerate(messages):
                 if msg.get("role") == "system":
-                    messages[i] = {**msg, "content": msg["content"] + f"\n\n{block}"}
+                    messages[i] = {**msg, "content": self._append_memory_block(msg.get("content", ""), block)}
                     return
             # No system message found — prepend one
             messages.insert(0, {"role": "system", "content": block})
@@ -214,6 +219,11 @@ class ObservableMemoryHandler:
             model: Model name (used for token counting).
             context_window: Context window size in tokens.
         """
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            logger.warning("ObservableMemory: schedule_observe called outside event loop — skipping")
+            return
         asyncio.create_task(
             self._proc.observe(
                 thread_id=thread_id,

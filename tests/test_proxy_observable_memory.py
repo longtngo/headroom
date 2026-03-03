@@ -162,18 +162,18 @@ class TestResolveThreadId:
 
     def test_hash_is_stable(self):
         """Same inputs always produce same thread ID."""
-        args = dict(
-            headers={},
-            messages=[{"role": "user", "content": "Hello, I need help"}],
-            body={"system": "You are an expert."},
-            user_id="user-bob",
-        )
+        args = {
+            "headers": {},
+            "messages": [{"role": "user", "content": "Hello, I need help"}],
+            "body": {"system": "You are an expert."},
+            "user_id": "user-bob",
+        }
         r1 = self._call(**args)
         r2 = self._call(**args)
         assert r1 == r2
 
     def test_different_first_messages_produce_different_ids(self):
-        base = dict(body={"system": "sys"}, user_id="user-1", headers={})
+        base = {"body": {"system": "sys"}, "user_id": "user-1", "headers": {}}
         r1 = self._call(messages=[{"role": "user", "content": "Question A"}], **base)
         r2 = self._call(messages=[{"role": "user", "content": "Question B"}], **base)
         assert r1 != r2
@@ -307,6 +307,35 @@ class TestObservableMemoryHandler:
         original_system = body["system"]
         await handler.inject_observations("thread-1", body, provider="anthropic")
         assert body["system"] == original_system  # unchanged
+
+    @pytest.mark.asyncio
+    async def test_inject_observations_openai_list_content_appends_block(self):
+        """OpenAI system message with list content gets a new text block appended."""
+        handler = self._make_handler(stored="* 🔴 (14:30) user prefers TypeScript")
+        body = {"messages": [
+            {"role": "system", "content": [{"type": "text", "text": "You are helpful."}]},
+            {"role": "user", "content": "Hello"},
+        ]}
+        await handler.inject_observations("thread-1", body, provider="openai")
+        sys_content = body["messages"][0]["content"]
+        assert isinstance(sys_content, list)
+        assert any(
+            b.get("type") == "text" and "<memory>" in b.get("text", "")
+            for b in sys_content
+        )
+
+    @pytest.mark.asyncio
+    async def test_inject_observations_anthropic_list_system_appends_block(self):
+        """Anthropic system as list of blocks gets a new text block appended."""
+        handler = self._make_handler(stored="* 🔴 (14:30) user prefers Python")
+        body = {"system": [{"type": "text", "text": "You are helpful."}], "messages": []}
+        await handler.inject_observations("thread-1", body, provider="anthropic")
+        sys_content = body["system"]
+        assert isinstance(sys_content, list)
+        assert any(
+            b.get("type") == "text" and "<memory>" in b.get("text", "")
+            for b in sys_content
+        )
 
     # --- schedule_observe ---
 
