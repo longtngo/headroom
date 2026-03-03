@@ -129,6 +129,10 @@ memory = [
     "hnswlib>=0.8.0", # HNSW vector index for semantic search
     "sqlite-vec>=0.1.6",
 ]
+# Proactive background memory compression using Observer/Reflector LLM agents
+observable-memory = [
+    "aiosqlite>=0.17.0",
+]
 # AWS Bedrock backend
 bedrock = [
     "boto3>=1.28.0",
@@ -159,7 +163,7 @@ dev = [
 ]
 # All optional dependencies
 all = [
-    "headroom-ai[relevance,proxy,reports,llmlingua,code,evals,memory,voice,html,benchmark,mcp]",
+    "headroom-ai[relevance,proxy,reports,llmlingua,code,evals,memory,voice,html,benchmark,mcp,observable-memory]",
 ]
 
 [project.scripts]
