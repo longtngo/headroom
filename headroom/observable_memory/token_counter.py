@@ -64,4 +64,4 @@ def count_string(text: str, model: str = "gpt-4o") -> int:
     if not text:
         return 0
     encoder = get_encoder(model)
-    return len(encoder.encode(text))
+    return len(encoder.encode(text, allowed_special="all"))

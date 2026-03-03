@@ -43,3 +43,10 @@ def test_get_encoder_different_models_cached_separately():
     # Different encoding names → different encoder objects
     # (o200k_base vs cl100k_base)
     assert enc_4o is not enc_4
+
+
+def test_count_string_special_tokens():
+    """Special tokens in input do not raise; they are counted."""
+    count = count_string("<|endoftext|>")
+    assert isinstance(count, int)
+    assert count >= 1
