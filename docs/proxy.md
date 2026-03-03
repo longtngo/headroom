@@ -54,6 +54,37 @@ headroom proxy --no-intelligent-context
 headroom proxy --no-intelligent-scoring
 ```
 
+### Observable Memory Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--observable-memory` | `false` | Enable Observable Memory proactive compression |
+| `--observable-memory-observer-model` | `None` | LLM for Observer agent (inherits upstream model if not set) |
+| `--observable-memory-reflector-model` | `None` | LLM for Reflector agent (inherits observer model if not set) |
+| `--observable-memory-db-path` | `":memory:"` | SQLite path for observations, or `":memory:"` for ephemeral |
+| `--observable-memory-message-threshold-ratio` | `0.25` | Min context usage before observing (0.0–1.0) |
+| `--observable-memory-observation-threshold-ratio` | `0.35` | Observation size that triggers Reflector (0.0–1.0) |
+| `--observable-memory-instruction` | `None` | Custom instructions appended to Observer and Reflector prompts |
+| `--observable-memory-observer-api-key` | `None` | API key for Observer LLM (if using a different provider) |
+
+**Note:** Observable Memory requires additional dependencies: `pip install headroom-ai[observable-memory]`
+
+```bash
+# Enable Observable Memory with a cheap observer model
+headroom proxy --observable-memory --observable-memory-observer-model gpt-4o-mini
+
+# With SQLite persistence
+headroom proxy \
+  --observable-memory \
+  --observable-memory-observer-model gpt-4o-mini \
+  --observable-memory-db-path /var/data/observations.db
+
+# With custom observer instructions
+headroom proxy \
+  --observable-memory \
+  --observable-memory-instruction "Focus on technical decisions and error resolutions."
+```
+
 ### LLMLingua Options (ML Compression)
 
 | Option | Default | Description |
@@ -147,6 +178,41 @@ client = OpenAI(
 ```
 
 ## Features
+
+### Observable Memory (Opt-In)
+
+When enabled, the proxy proactively compresses message history using Observer/Reflector LLM agents. Every conversation passing through the proxy automatically receives background summarization — no client changes required.
+
+```bash
+headroom proxy --observable-memory --observable-memory-observer-model gpt-4o-mini
+```
+
+**How it works:**
+- **Before each request** — stored observations from prior turns are injected into the system prompt as `<memory>...</memory>`
+- **After each response** — a background Observer LLM reads the new turn and writes structured observations (facts, decisions, blockers, preferences)
+- **When observations grow large** — a Reflector LLM compresses them with escalating detail reduction
+
+**Thread ID resolution** — the proxy auto-derives a thread ID for each conversation from request headers (first match wins):
+
+1. `x-headroom-thread-id` — explicit Headroom ID
+2. `helicone-session-id` — Helicone session
+3. `x-portkey-trace-id` — Portkey trace
+4. `mcp-session-id` — MCP session
+5. Content hash of `user_id + system[:200] + first_user_msg[:300]` — uninstrumented clients (Claude Code, Codex CLI, etc.)
+
+**Startup feedback:**
+
+```
+  Obs. Memory:  ENABLED
+
+Observable Memory:
+  - Observer model:  gpt-4o-mini
+  - Reflector model: gpt-4o-mini
+  - Storage:         /var/data/observations.db
+  - Thresholds:      message=0.25, observation=0.35
+```
+
+See [Observable Memory](observable-memory.md) for full configuration details and examples.
 
 ### LLMLingua ML Compression (Opt-In)
 

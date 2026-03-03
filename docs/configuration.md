@@ -64,6 +64,36 @@ headroom proxy --llmlingua
 headroom proxy --llmlingua --llmlingua-device cuda --llmlingua-rate 0.4
 ```
 
+### Observable Memory Options
+
+Enable proactive background compression of message history via Observer/Reflector LLM agents:
+
+```bash
+# Enable with a cheap observer model
+headroom proxy --observable-memory --observable-memory-observer-model gpt-4o-mini
+
+# With SQLite persistence and custom thresholds
+headroom proxy \
+  --observable-memory \
+  --observable-memory-observer-model gpt-4o-mini \
+  --observable-memory-db-path /var/data/observations.db \
+  --observable-memory-message-threshold-ratio 0.25 \
+  --observable-memory-observation-threshold-ratio 0.35
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `--observable-memory` | flag | `false` | Enable Observable Memory |
+| `--observable-memory-observer-model` | str | `None` | Observer LLM (inherits upstream model if not set) |
+| `--observable-memory-reflector-model` | str | `None` | Reflector LLM (inherits observer model if not set) |
+| `--observable-memory-db-path` | str | `":memory:"` | SQLite path, or `":memory:"` for ephemeral storage |
+| `--observable-memory-message-threshold-ratio` | float | `0.25` | Context usage before observing (0.0–1.0) |
+| `--observable-memory-observation-threshold-ratio` | float | `0.35` | Observation size before reflecting (0.0–1.0) |
+| `--observable-memory-instruction` | str | `None` | Custom instructions for Observer and Reflector prompts |
+| `--observable-memory-observer-api-key` | str | `None` | API key for Observer LLM (if using a different provider) |
+
+See [Observable Memory](observable-memory.md) for full behavior, examples, and troubleshooting.
+
 ### All Options
 
 ```bash

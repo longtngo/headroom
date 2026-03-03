@@ -67,6 +67,50 @@ from .main import main
     default=10,
     help="Number of memories to inject as context (default: 10)",
 )
+# Observable Memory (proactive background compression via Observer/Reflector agents)
+@click.option(
+    "--observable-memory",
+    is_flag=True,
+    help="Enable Observable Memory: proactive background compression of message history "
+    "using Observer/Reflector LLM agents. Requires headroom-ai[observable-memory].",
+)
+@click.option(
+    "--observable-memory-observer-model",
+    default=None,
+    help="LLM model for Observer agent (defaults to upstream model if not set).",
+)
+@click.option(
+    "--observable-memory-reflector-model",
+    default=None,
+    help="LLM model for Reflector agent (defaults to observer model if not set).",
+)
+@click.option(
+    "--observable-memory-db-path",
+    default=":memory:",
+    help="SQLite file path for observations, or ':memory:' for ephemeral (default: :memory:).",
+)
+@click.option(
+    "--observable-memory-message-threshold-ratio",
+    type=float,
+    default=0.25,
+    help="Fraction of context window used before observing, 0.0-1.0 (default: 0.25).",
+)
+@click.option(
+    "--observable-memory-observation-threshold-ratio",
+    type=float,
+    default=0.35,
+    help="Fraction of context window before reflecting observations, 0.0-1.0 (default: 0.35).",
+)
+@click.option(
+    "--observable-memory-instruction",
+    default=None,
+    help="Custom instruction appended to Observer and Reflector prompts.",
+)
+@click.option(
+    "--observable-memory-observer-api-key",
+    default=None,
+    help="API key for Observer LLM if using a different provider than the proxy.",
+)
 # Backend configuration
 @click.option(
     "--backend",
@@ -118,6 +162,14 @@ def proxy(
     no_memory_tools: bool,
     no_memory_context: bool,
     memory_top_k: int,
+    observable_memory: bool,
+    observable_memory_observer_model: str | None,
+    observable_memory_reflector_model: str | None,
+    observable_memory_db_path: str,
+    observable_memory_message_threshold_ratio: float,
+    observable_memory_observation_threshold_ratio: float,
+    observable_memory_instruction: str | None,
+    observable_memory_observer_api_key: str | None,
     backend: str,
     anyllm_provider: str,
     region: str,
@@ -172,6 +224,15 @@ def proxy(
         memory_inject_tools=not no_memory_tools,
         memory_inject_context=not no_memory_context,
         memory_top_k=memory_top_k,
+        # Observable Memory (proactive background compression)
+        observable_memory_enabled=observable_memory,
+        observable_memory_observer_model=observable_memory_observer_model,
+        observable_memory_reflector_model=observable_memory_reflector_model,
+        observable_memory_db_path=observable_memory_db_path,
+        observable_memory_message_threshold_ratio=observable_memory_message_threshold_ratio,
+        observable_memory_observation_threshold_ratio=observable_memory_observation_threshold_ratio,
+        observable_memory_instruction=observable_memory_instruction,
+        observable_memory_observer_api_key=observable_memory_observer_api_key,
         # Backend (Anthropic direct, Bedrock, LiteLLM, or any-llm)
         backend=backend,
         bedrock_region=bedrock_region or region,
@@ -223,6 +284,20 @@ IMPORTANT for {provider_config.display_name} users:
             backend_section += f"\n  4. Use model names: {provider_config.model_format_hint}"
         backend_section += "\n"
 
+    # Build observable memory section if enabled
+    observable_memory_section = ""
+    if config.observable_memory_enabled:
+        om_obs_model = config.observable_memory_observer_model or "(upstream model)"
+        om_ref_model = config.observable_memory_reflector_model or om_obs_model
+        om_db = config.observable_memory_db_path
+        observable_memory_section = f"""
+Observable Memory:
+  - Observer model:  {om_obs_model}
+  - Reflector model: {om_ref_model}
+  - Storage:         {om_db}
+  - Thresholds:      message={config.observable_memory_message_threshold_ratio}, observation={config.observable_memory_observation_threshold_ratio}
+"""
+
     # Build memory section if enabled
     memory_section = ""
     if config.memory_enabled:
@@ -252,13 +327,14 @@ Starting proxy server...
   Caching:      {"ENABLED" if config.cache_enabled else "DISABLED"}
   Rate Limit:   {"ENABLED" if config.rate_limit_enabled else "DISABLED"}
   Memory:       {memory_status}
+  Obs. Memory:  {"ENABLED" if config.observable_memory_enabled else "DISABLED"}
 {backend_section}
 Usage with Claude Code:
   ANTHROPIC_BASE_URL=http://{config.host}:{config.port} claude
 
 Usage with OpenAI-compatible clients:
   OPENAI_BASE_URL=http://{config.host}:{config.port}/v1 your-app
-{memory_section}
+
 Endpoints:
   GET  /health     Health check
   GET  /stats      Detailed statistics
@@ -267,7 +343,7 @@ Endpoints:
   POST /v1/chat/completions   OpenAI API
 
 Press Ctrl+C to stop.
-""")
+{memory_section}{observable_memory_section}""")
 
     try:
         run_server(config)

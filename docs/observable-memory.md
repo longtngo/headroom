@@ -86,6 +86,91 @@ async def chat_turn(thread_id: str, new_messages: list, context_window: int):
 
 ---
 
+## Proxy Integration
+
+Observable Memory can be enabled directly in the **headroom proxy server** — no custom code required. All conversations passing through the proxy automatically receive proactive background compression.
+
+### Quick Start
+
+```bash
+pip install "headroom-ai[observable-memory]"
+
+headroom proxy \
+  --observable-memory \
+  --observable-memory-observer-model gpt-4o-mini \
+  --observable-memory-db-path /var/data/observations.db
+```
+
+Every request to `/v1/messages` (Anthropic) or `/v1/chat/completions` (OpenAI) now automatically:
+
+1. Retrieves stored observations for the conversation and injects them as `<memory>...</memory>` into the system prompt
+2. Fires a background Observer LLM call after each response to record new observations
+3. Runs a Reflector LLM when observations grow too large
+
+### Thread ID Resolution
+
+The proxy needs a thread ID to scope observations per conversation. It resolves one automatically — clients don't need to change anything:
+
+| Priority | Source | Notes |
+|---|---|---|
+| 1 | `x-headroom-thread-id` header | Headroom native |
+| 2 | `helicone-session-id` header | Helicone interop |
+| 3 | `x-portkey-trace-id` header | Portkey interop |
+| 4 | `mcp-session-id` header | MCP protocol |
+| 5 | Content hash (derived) | Uninstrumented clients (Claude Code, Codex CLI, …) |
+| 6 | None — OM skipped | No messages in request |
+
+The content hash is computed as `sha256(user_id + "|" + system[:200] + "|" + first_user_msg[:300])[:16]`. Because the full message history is sent on every turn in stateless APIs, the first user message is always present and stable, making the hash reliably identify the same conversation across turns.
+
+To supply an explicit thread ID:
+
+```bash
+curl http://localhost:8787/v1/messages \
+  -H "x-headroom-thread-id: conv-user-123-session-1" \
+  -H "x-api-key: $ANTHROPIC_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "claude-opus-4-6", "messages": [...]}'
+```
+
+### CLI Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--observable-memory` | `false` | Enable Observable Memory |
+| `--observable-memory-observer-model` | `None` | Observer LLM (inherits upstream model if not set) |
+| `--observable-memory-reflector-model` | `None` | Reflector LLM (inherits observer model if not set) |
+| `--observable-memory-db-path` | `":memory:"` | SQLite path, or `":memory:"` for ephemeral |
+| `--observable-memory-message-threshold-ratio` | `0.25` | Context usage before observing |
+| `--observable-memory-observation-threshold-ratio` | `0.35` | Observation size before reflecting |
+| `--observable-memory-instruction` | `None` | Custom instructions for Observer and Reflector |
+| `--observable-memory-observer-api-key` | `None` | API key for Observer LLM (if different provider) |
+
+### Production Example
+
+```bash
+headroom proxy \
+  --host 0.0.0.0 \
+  --port 8787 \
+  --observable-memory \
+  --observable-memory-observer-model gpt-4o-mini \
+  --observable-memory-reflector-model gpt-4o-mini \
+  --observable-memory-db-path /var/data/headroom/observations.db \
+  --observable-memory-message-threshold-ratio 0.2 \
+  --observable-memory-observation-threshold-ratio 0.3 \
+  --observable-memory-instruction "Focus on user intent, technical decisions, and blockers."
+```
+
+### Compatibility
+
+| | Status |
+|---|---|
+| Anthropic `/v1/messages` | ✅ Supported |
+| OpenAI `/v1/chat/completions` | ✅ Supported |
+| Streaming | Non-streaming only (streaming support planned) |
+| Semantic caching, rate limiting, LLMLingua | ✅ Compatible — runs alongside all proxy features |
+
+---
+
 ## How It Works
 
 ```
