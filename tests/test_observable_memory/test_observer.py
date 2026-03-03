@@ -65,6 +65,22 @@ def test_format_messages_with_timestamp():
     assert "Hello" in formatted
 
 
+def test_format_messages_with_unix_epoch_timestamp():
+    """Unix epoch string timestamps are parsed correctly."""
+    messages = [
+        {
+            "role": "user",
+            "content": "Hello",
+            "created_at": "1733322600.0",  # 2024-12-04 14:30:00 UTC as string
+        }
+    ]
+    formatted = format_messages_for_observer(messages)
+    assert "User" in formatted
+    assert "Hello" in formatted
+    # Timestamp should be present (not silently dropped)
+    assert "2024" in formatted or "Dec" in formatted
+
+
 def test_format_messages_truncates_long_content():
     long_content = "x" * 10_000
     messages = [{"role": "user", "content": long_content}]

@@ -139,6 +139,7 @@ OBSERVER_GUIDELINES = """- Be specific enough for the assistant to act on
 
 # Maximum characters per observation line before truncation
 _MAX_OBSERVATION_LINE_CHARS = 10_000
+_TRUNCATION_SUFFIX = " … [truncated]"
 
 
 # ── System prompt builder ─────────────────────────────────────────────────────
@@ -212,6 +213,8 @@ def format_messages_for_observer(
     if not messages:
         return ""
 
+    from datetime import datetime, timezone  # stdlib, deferred to keep module-level imports minimal
+
     parts: list[str] = []
     for msg in messages:
         role = msg.get("role", "unknown")
@@ -222,10 +225,12 @@ def format_messages_for_observer(
         created_at = msg.get("created_at")
         if created_at:
             try:
-                from datetime import datetime, timezone
-
                 if isinstance(created_at, str):
-                    dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                    try:
+                        dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                    except ValueError:
+                        # Try parsing as unix epoch string (e.g., "1733322600.0")
+                        dt = datetime.fromtimestamp(float(created_at), tz=timezone.utc)
                 else:
                     dt = datetime.fromtimestamp(float(created_at), tz=timezone.utc)
                 timestamp_str = f" ({dt.strftime('%b %d, %Y, %I:%M %p')})"
@@ -325,13 +330,11 @@ def sanitize_observation_lines(observations: str) -> str:
     """
     if not observations:
         return observations
-    _TRUNCATION_SUFFIX = " … [truncated]"
     lines = observations.split("\n")
     changed = False
     for i, line in enumerate(lines):
         if len(line) > _MAX_OBSERVATION_LINE_CHARS:
-            keep = _MAX_OBSERVATION_LINE_CHARS - len(_TRUNCATION_SUFFIX)
-            lines[i] = line[:keep] + _TRUNCATION_SUFFIX
+            lines[i] = line[:_MAX_OBSERVATION_LINE_CHARS - len(_TRUNCATION_SUFFIX)] + _TRUNCATION_SUFFIX
             changed = True
     return "\n".join(lines) if changed else observations
 
