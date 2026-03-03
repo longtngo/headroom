@@ -4303,6 +4303,27 @@ class HeadroomProxy:
         if tools is not None:
             body["tools"] = tools
 
+        # Observable Memory: inject stored observations into system prompt
+        # NOTE: schedule_observe is only wired for the non-streaming direct OpenAI path.
+        om_thread_id: str | None = None
+        if self.observable_memory_handler:
+            from headroom.proxy.observable_memory_handler import resolve_thread_id
+
+            om_thread_id = resolve_thread_id(
+                headers=headers,
+                messages=messages,
+                body=body,
+                user_id=headers.get("x-headroom-user-id"),
+            )
+            if om_thread_id:
+                try:
+                    await self.observable_memory_handler.inject_observations(
+                        om_thread_id, body, provider="openai"
+                    )
+                    logger.debug(f"[{request_id}] ObservableMemory: injected observations for thread={om_thread_id}")
+                except Exception as e:
+                    logger.warning(f"[{request_id}] ObservableMemory: inject failed: {e}")
+
         # Route through LiteLLM backend if configured (Databricks, Bedrock, etc.)
         if self.anthropic_backend is not None:
             try:
@@ -4388,6 +4409,7 @@ class HeadroomProxy:
                 total_input_tokens = optimized_tokens  # fallback
                 output_tokens = 0
                 cache_read_tokens = 0
+                resp_json = None
                 try:
                     resp_json = response.json()
                     usage = resp_json.get("usage", {})
@@ -4401,6 +4423,23 @@ class HeadroomProxy:
                     logger.debug(
                         f"[{request_id}] Failed to extract cached tokens from OpenAI response: {e}"
                     )
+
+                # Observable Memory: schedule background observation
+                if self.observable_memory_handler and om_thread_id:
+                    try:
+                        _om_reply = ""
+                        for _choice in (resp_json or {}).get("choices", []):
+                            _om_reply += _choice.get("message", {}).get("content", "") or ""
+                        if _om_reply:
+                            context_limit = self.openai_provider.get_context_limit(model)
+                            self.observable_memory_handler.schedule_observe(
+                                thread_id=om_thread_id,
+                                messages=list(optimized_messages) + [{"role": "assistant", "content": _om_reply}],
+                                model=model,
+                                context_window=context_limit,
+                            )
+                    except Exception as e:
+                        logger.debug(f"[{request_id}] ObservableMemory: schedule_observe failed: {e}")
 
                 # For OpenAI, prompt_tokens is TOTAL (includes cached)
                 # Normalize to non-cached input for consistent cost calculation

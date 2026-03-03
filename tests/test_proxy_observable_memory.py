@@ -1,6 +1,8 @@
 """Tests for ObservableMemoryHandler and ProxyLLMBridge."""
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 
@@ -556,3 +558,147 @@ class TestAnthropicHandlerObservableMemory:
 
         assert len(proc.observe_calls) == 1
         assert proc.observe_calls[0]["thread_id"] == "test-thread"
+
+
+class TestOpenAIHandlerObservableMemory:
+
+    @pytest.mark.asyncio
+    async def test_observations_injected_into_openai_system_message(self, monkeypatch):
+        import json
+        from unittest.mock import MagicMock
+
+        from starlette.requests import Request
+
+        from headroom.observable_memory import ObservableMemoryConfig, ObservableMemoryProcessor
+        from headroom.observable_memory.store import InMemoryObservationStore
+        from headroom.proxy.observable_memory_handler import ObservableMemoryHandler, ProxyLLMBridge
+        from headroom.proxy.server import HeadroomProxy, HeadroomProxyConfig
+
+        config = HeadroomProxyConfig(optimize=False, observable_memory_enabled=True)
+        proxy = HeadroomProxy(config)
+
+        store = InMemoryObservationStore()
+        await store.save("oai-thread", "* 🔴 (14:30) user prefers TypeScript")
+
+        om_config = ObservableMemoryConfig(enabled=True)
+        bridge = ProxyLLMBridge(api_key="sk-test")
+        handler = ObservableMemoryHandler(config=om_config, llm=bridge)
+        handler._proc = ObservableMemoryProcessor(config=om_config, llm=bridge, store=store)
+        proxy.observable_memory_handler = handler
+
+        forwarded_bodies = []
+
+        async def fake_post(url, json=None, headers=None):
+            forwarded_bodies.append(json)
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.json.return_value = {
+                "id": "chatcmpl-test",
+                "object": "chat.completion",
+                "choices": [{"message": {"role": "assistant", "content": "Sure!"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+            }
+            return mock_resp
+
+        proxy.http_client = MagicMock()
+        proxy.http_client.post = fake_post
+
+        body = {
+            "model": "gpt-4o",
+            "messages": [
+                {"role": "system", "content": "You are an assistant."},
+                {"role": "user", "content": "Help me write TypeScript"},
+            ],
+        }
+        body_bytes = json.dumps(body).encode()
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/v1/chat/completions",
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body_bytes)).encode()),
+                (b"authorization", b"Bearer sk-test"),
+                (b"x-headroom-thread-id", b"oai-thread"),
+            ],
+        }
+
+        async def receive():
+            return {"type": "http.request", "body": body_bytes}
+
+        request = Request(scope, receive)
+        await proxy.handle_openai_chat(request)
+
+        assert len(forwarded_bodies) == 1
+        system_msg = next(
+            (m for m in forwarded_bodies[0]["messages"] if m["role"] == "system"), None
+        )
+        assert system_msg is not None
+        assert "<memory>" in system_msg["content"]
+        assert "user prefers TypeScript" in system_msg["content"]
+
+    @pytest.mark.asyncio
+    async def test_schedule_observe_called_after_openai_response(self):
+        import json
+        from unittest.mock import MagicMock
+
+        from starlette.requests import Request
+
+        from headroom.observable_memory import ObservableMemoryConfig
+        from headroom.proxy.observable_memory_handler import ObservableMemoryHandler, ProxyLLMBridge
+        from headroom.proxy.server import HeadroomProxy, HeadroomProxyConfig
+
+        config = HeadroomProxyConfig(optimize=False, observable_memory_enabled=True)
+        proxy = HeadroomProxy(config)
+
+        om_config = ObservableMemoryConfig(enabled=True)
+        bridge = ProxyLLMBridge(api_key="sk-test")
+        handler = ObservableMemoryHandler(config=om_config, llm=bridge)
+        proc = FakeProc()
+        handler._proc = proc
+        proxy.observable_memory_handler = handler
+
+        async def fake_post(url, json=None, headers=None):
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.json.return_value = {
+                "id": "chatcmpl-test",
+                "object": "chat.completion",
+                "choices": [{"message": {"role": "assistant", "content": "Sure!"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+            }
+            return mock_resp
+
+        proxy.http_client = MagicMock()
+        proxy.http_client.post = fake_post
+
+        body = {
+            "model": "gpt-4o",
+            "messages": [
+                {"role": "user", "content": "Help me write TypeScript"},
+            ],
+        }
+        body_bytes = json.dumps(body).encode()
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/v1/chat/completions",
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body_bytes)).encode()),
+                (b"authorization", b"Bearer sk-test"),
+                (b"x-headroom-thread-id", b"oai-thread-2"),
+            ],
+        }
+
+        async def receive():
+            return {"type": "http.request", "body": body_bytes}
+
+        request = Request(scope, receive)
+        await proxy.handle_openai_chat(request)
+
+        await asyncio.sleep(0)  # let background task run
+        assert len(proc.observe_calls) == 1
+        assert proc.observe_calls[0]["thread_id"] == "oai-thread-2"
