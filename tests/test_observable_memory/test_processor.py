@@ -158,6 +158,8 @@ async def test_processor_reflect_compresses_observations():
     saved = await store.load("thread-1")
     # Reflector was triggered: saved observations should be the reflector's output
     assert saved is not None
+    assert "reflected obs" in saved
+    assert "reflector" in llm.calls
 
 
 @pytest.mark.asyncio
@@ -178,3 +180,34 @@ async def test_processor_get_observations_returns_none_when_empty():
         config=config, llm=FakeLLM(), store=InMemoryObservationStore()
     )
     assert await proc.get_observations("nonexistent") is None
+
+
+@pytest.mark.asyncio
+async def test_processor_clear_observations():
+    store = InMemoryObservationStore()
+    await store.save("thread-1", "* some obs")
+    proc = ObservableMemoryProcessor(
+        config=ObservableMemoryConfig(enabled=True), llm=FakeLLM(), store=store
+    )
+    await proc.clear_observations("thread-1")
+    assert await proc.get_observations("thread-1") is None
+
+
+@pytest.mark.asyncio
+async def test_processor_observe_without_token_count_always_proceeds():
+    """When current_token_count is omitted, the threshold check is skipped."""
+    config = ObservableMemoryConfig(
+        enabled=True,
+        observer_model="gpt-4o",
+        message_threshold_ratio=0.99,  # would normally skip
+    )
+    store = InMemoryObservationStore()
+    llm = FakeLLM()
+    proc = ObservableMemoryProcessor(config=config, llm=llm, store=store)
+
+    messages = [{"role": "user", "content": "Hello"}]
+    # Omit current_token_count — should always observe regardless of ratio
+    await proc.observe("thread-1", messages, model="gpt-4o", context_window=128_000)
+
+    saved = await store.load("thread-1")
+    assert saved is not None

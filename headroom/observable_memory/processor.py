@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import Any, Literal, cast
 
 from .reflector import (
     build_reflector_prompt,
@@ -100,7 +100,7 @@ class ObservableMemoryProcessor:
         model: str,
         context_window: int,
         current_token_count: int | None = None,
-        abort: Any = None,
+        abort: asyncio.Event | None = None,
     ) -> None:
         """Run one observe/reflect cycle for new messages.
 
@@ -138,8 +138,7 @@ class ObservableMemoryProcessor:
                 return
 
         # Run Observer
-        abort_event = abort if isinstance(abort, asyncio.Event) else None
-        await self._worker.observe(thread_id, messages, model=model, abort=abort_event)
+        await self._worker.observe(thread_id, messages, model=model, abort=abort)
 
         # Check reflection threshold
         await self._maybe_reflect(thread_id, model, context_window)
@@ -168,7 +167,7 @@ class ObservableMemoryProcessor:
             thread_id,
         )
 
-        await self._run_reflector(thread_id, observations, model, obs_threshold)
+        await self._run_reflector(thread_id, observations, model, obs_threshold, original_token_count=obs_tokens)
 
     async def _run_reflector(
         self,
@@ -177,15 +176,19 @@ class ObservableMemoryProcessor:
         model: str,
         target_threshold: int,
         max_attempts: int = 4,
+        original_token_count: int | None = None,
     ) -> None:
         """Run the Reflector LLM with escalating compression levels."""
-        assert self._llm is not None
+        if self._llm is None:
+            raise RuntimeError(
+                "_run_reflector called with no LLMProvider — this is a programming error."
+            )
 
         reflector_model = self._config.reflector_model or model
         system_prompt = build_reflector_system_prompt(instruction=self._config.instruction)
 
         for attempt in range(max_attempts):
-            compression_level = min(attempt, 3)
+            compression_level = cast(Literal[0, 1, 2, 3], min(attempt, 3))
             user_prompt = build_reflector_prompt(
                 observations,
                 compression_level=compression_level,
@@ -214,7 +217,7 @@ class ObservableMemoryProcessor:
                 await self._store.save(thread_id, result.observations)
                 logger.info(
                     "OM.reflect: compressed %d → %d tokens for thread=%s",
-                    count_string(observations, model),
+                    original_token_count if original_token_count is not None else count_string(observations, model),
                     reflected_tokens,
                     thread_id,
                 )
