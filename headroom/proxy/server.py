@@ -2199,11 +2199,14 @@ class HeadroomProxy:
                                 _om_reply += _block.get("text", "")
                         if _om_reply:
                             context_limit = self.anthropic_provider.get_context_limit(model)
+                            _om_usage = (resp_json or {}).get("usage", {}) or {}
+                            _om_tokens = _om_usage.get("input_tokens", 0) + _om_usage.get("output_tokens", 0)
                             self.observable_memory_handler.schedule_observe(
                                 thread_id=om_thread_id,
                                 messages=list(optimized_messages) + [{"role": "assistant", "content": _om_reply}],
                                 model=model,
                                 context_window=context_limit,
+                                current_token_count=_om_tokens if _om_tokens > 0 else None,
                             )
                     except Exception as e:
                         logger.debug(f"[{request_id}] ObservableMemory: schedule_observe failed: {e}")
@@ -4307,6 +4310,10 @@ class HeadroomProxy:
         # NOTE: inject_observations must run AFTER body["messages"] is set — it mutates body["messages"] directly.
         # NOTE: schedule_observe is only wired for the non-streaming direct OpenAI path.
         om_thread_id: str | None = None
+        # Snapshot optimized_messages BEFORE inject_observations mutates body["messages"] (and by
+        # reference optimized_messages) with the <memory> block.  The Observer should see only the
+        # real conversation history, not the injected memory context we added for the model.
+        om_messages_snapshot: list = list(optimized_messages)
         if self.observable_memory_handler:
             from headroom.proxy.observable_memory_handler import resolve_thread_id
 
@@ -4433,11 +4440,14 @@ class HeadroomProxy:
                             _om_reply += _choice.get("message", {}).get("content", "") or ""
                         if _om_reply:
                             context_limit = self.openai_provider.get_context_limit(model)
+                            _om_usage = (resp_json or {}).get("usage", {}) or {}
+                            _om_tokens = _om_usage.get("prompt_tokens", 0) + _om_usage.get("completion_tokens", 0)
                             self.observable_memory_handler.schedule_observe(
                                 thread_id=om_thread_id,
-                                messages=list(optimized_messages) + [{"role": "assistant", "content": _om_reply}],
+                                messages=om_messages_snapshot + [{"role": "assistant", "content": _om_reply}],
                                 model=model,
                                 context_window=context_limit,
+                                current_token_count=_om_tokens if _om_tokens > 0 else None,
                             )
                     except Exception as e:
                         logger.debug(f"[{request_id}] ObservableMemory: schedule_observe failed: {e}")

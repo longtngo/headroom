@@ -242,12 +242,13 @@ class FakeProc:
     async def get_observations(self, thread_id: str) -> str | None:
         return self.stored
 
-    async def observe(self, thread_id, messages, model, context_window, **kwargs):
+    async def observe(self, thread_id, messages, model, context_window, current_token_count=None, **kwargs):
         self.observe_calls.append({
             "thread_id": thread_id,
             "messages": messages,
             "model": model,
             "context_window": context_window,
+            "current_token_count": current_token_count,
         })
 
 
@@ -339,6 +340,17 @@ class TestObservableMemoryHandler:
             for b in sys_content
         )
 
+    @pytest.mark.asyncio
+    async def test_inject_observations_openai_missing_messages_key(self):
+        """inject_observations creates body['messages'] when key is absent (edge case Fix 3)."""
+        handler = self._make_handler(stored="* 🔴 (14:30) important fact")
+        body: dict = {}  # no 'messages' key at all
+        await handler.inject_observations("thread-1", body, provider="openai")
+        # body["messages"] must now exist and contain a system message with the memory block
+        assert "messages" in body
+        assert body["messages"][0]["role"] == "system"
+        assert "<memory>" in body["messages"][0]["content"]
+
     # --- schedule_observe ---
 
     @pytest.mark.asyncio
@@ -360,6 +372,45 @@ class TestObservableMemoryHandler:
         assert len(proc.observe_calls) == 1
         assert proc.observe_calls[0]["thread_id"] == "thread-1"
         assert proc.observe_calls[0]["model"] == "claude-opus-4-6"
+
+    @pytest.mark.asyncio
+    async def test_schedule_observe_forwards_current_token_count(self):
+        """current_token_count is forwarded to the processor's observe() call."""
+        import asyncio
+        handler = self._make_handler()
+        messages = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}]
+
+        handler.schedule_observe(
+            thread_id="thread-1",
+            messages=messages,
+            model="claude-opus-4-6",
+            context_window=128_000,
+            current_token_count=42,
+        )
+
+        await asyncio.sleep(0)
+        proc: FakeProc = handler._proc  # type: ignore
+        assert len(proc.observe_calls) == 1
+        assert proc.observe_calls[0]["current_token_count"] == 42
+
+    @pytest.mark.asyncio
+    async def test_schedule_observe_defaults_token_count_to_none(self):
+        """current_token_count defaults to None when not provided."""
+        import asyncio
+        handler = self._make_handler()
+        messages = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}]
+
+        handler.schedule_observe(
+            thread_id="thread-1",
+            messages=messages,
+            model="claude-opus-4-6",
+            context_window=128_000,
+        )
+
+        await asyncio.sleep(0)
+        proc: FakeProc = handler._proc  # type: ignore
+        assert len(proc.observe_calls) == 1
+        assert proc.observe_calls[0]["current_token_count"] is None
 
 
 class TestProxyConfig:
@@ -558,6 +609,9 @@ class TestAnthropicHandlerObservableMemory:
 
         assert len(proc.observe_calls) == 1
         assert proc.observe_calls[0]["thread_id"] == "test-thread"
+        # Verify that the token count from the API response is forwarded to the observer
+        # so the message_threshold_ratio guard can function correctly.
+        assert proc.observe_calls[0]["current_token_count"] == 15  # 10 input + 5 output
 
 
 class TestOpenAIHandlerObservableMemory:
@@ -702,3 +756,10 @@ class TestOpenAIHandlerObservableMemory:
         await asyncio.sleep(0)  # let background task run
         assert len(proc.observe_calls) == 1
         assert proc.observe_calls[0]["thread_id"] == "oai-thread-2"
+        # Verify that the token count from the OpenAI API response is forwarded to the observer
+        # so the message_threshold_ratio guard can function correctly.
+        assert proc.observe_calls[0]["current_token_count"] == 15  # 10 prompt + 5 completion
+        # Verify snapshot: messages passed to observe should not include injected <memory> block
+        # (there are no stored observations here, so this is straightforwardly the user message)
+        passed_msgs = proc.observe_calls[0]["messages"]
+        assert all("<memory>" not in str(m.get("content", "")) for m in passed_msgs)

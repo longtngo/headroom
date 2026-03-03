@@ -10,7 +10,7 @@ Usage:
     await handler.inject_observations(thread_id, body, provider="anthropic")
 
     # Post-response: fire-and-forget observation of new turn
-    handler.schedule_observe(thread_id, messages, model, context_window)
+    handler.schedule_observe(thread_id, messages, model, context_window, current_token_count)
 """
 from __future__ import annotations
 
@@ -193,7 +193,9 @@ class ObservableMemoryHandler:
             existing = body.get("system", "")
             body["system"] = self._append_memory_block(existing, block)
         else:  # openai
-            messages = body.get("messages", [])
+            if "messages" not in body:
+                body["messages"] = []
+            messages = body["messages"]
             for i, msg in enumerate(messages):
                 if msg.get("role") == "system":
                     messages[i] = {**msg, "content": self._append_memory_block(msg.get("content", ""), block)}
@@ -207,6 +209,7 @@ class ObservableMemoryHandler:
         messages: list[dict[str, Any]],
         model: str,
         context_window: int,
+        current_token_count: int | None = None,
     ) -> None:
         """Schedule a fire-and-forget observation of the new turn.
 
@@ -218,6 +221,11 @@ class ObservableMemoryHandler:
             messages: Full message history including the assistant reply.
             model: Model name (used for token counting).
             context_window: Context window size in tokens.
+            current_token_count: Total token count for the current request (input +
+                output). When provided, the ObservableMemoryProcessor will apply the
+                message_threshold_ratio guard and skip observation if the conversation
+                is still small relative to the context window. When None the guard is
+                bypassed and the Observer always runs.
         """
         try:
             asyncio.get_running_loop()
@@ -230,5 +238,6 @@ class ObservableMemoryHandler:
                 messages=messages,
                 model=model,
                 context_window=context_window,
+                current_token_count=current_token_count,
             )
         )
