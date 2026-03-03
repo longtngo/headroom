@@ -14,7 +14,7 @@ Usage:
 """
 from __future__ import annotations
 
-import asyncio  # noqa: F401 — used by ObservableMemoryHandler (Task 3)
+import asyncio
 import hashlib  # noqa: F401 — used by thread ID resolution (Task 2)
 import logging
 from typing import Any  # noqa: F401 — used by thread ID resolution (Task 2)
@@ -140,3 +140,85 @@ def resolve_thread_id(
             break
 
     return _derive_thread_id(user_id, system_text, first_user_msg)
+
+
+class ObservableMemoryHandler:
+    """Handles Observable Memory injection and observation for the proxy.
+
+    Pre-request: inject stored observations into the system prompt.
+    Post-response: fire-and-forget observation of the new turn.
+
+    Mirrors the MemoryHandler pattern in memory_handler.py.
+    """
+
+    def __init__(
+        self,
+        config: Any,  # ObservableMemoryConfig
+        llm: ProxyLLMBridge,
+    ) -> None:
+        from headroom.observable_memory import ObservableMemoryProcessor
+
+        self._proc = ObservableMemoryProcessor(config=config, llm=llm)
+
+    async def inject_observations(
+        self,
+        thread_id: str,
+        body: dict[str, Any],
+        provider: str,
+    ) -> None:
+        """Inject stored observations as <memory>...</memory> into system prompt.
+
+        Mutates body in place. No-op if no observations are stored.
+
+        Args:
+            thread_id: The resolved conversation thread ID.
+            body: The full request body (mutated in place).
+            provider: "anthropic" or "openai".
+        """
+        obs = await self._proc.get_observations(thread_id)
+        if not obs:
+            return
+
+        block = f"<memory>\n{obs}\n</memory>"
+
+        if provider == "anthropic":
+            existing = body.get("system", "")
+            if existing:
+                body["system"] = f"{existing}\n\n{block}"
+            else:
+                body["system"] = block
+        else:  # openai
+            messages = body.get("messages", [])
+            for i, msg in enumerate(messages):
+                if msg.get("role") == "system":
+                    messages[i] = {**msg, "content": msg["content"] + f"\n\n{block}"}
+                    return
+            # No system message found — prepend one
+            messages.insert(0, {"role": "system", "content": block})
+
+    def schedule_observe(
+        self,
+        thread_id: str,
+        messages: list[dict[str, Any]],
+        model: str,
+        context_window: int,
+    ) -> None:
+        """Schedule a fire-and-forget observation of the new turn.
+
+        Returns immediately. If the observer LLM fails, the circuit
+        breaker in ObservableMemoryProcessor catches it silently.
+
+        Args:
+            thread_id: The resolved conversation thread ID.
+            messages: Full message history including the assistant reply.
+            model: Model name (used for token counting).
+            context_window: Context window size in tokens.
+        """
+        asyncio.create_task(
+            self._proc.observe(
+                thread_id=thread_id,
+                messages=messages,
+                model=model,
+                context_window=context_window,
+            )
+        )

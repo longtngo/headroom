@@ -227,3 +227,105 @@ class TestResolveThreadId:
             body={},
         )
         assert result is not None
+
+
+class FakeProc:
+    """Fake ObservableMemoryProcessor for handler tests."""
+
+    def __init__(self, stored: str | None = None):
+        self.stored = stored
+        self.observe_calls: list[dict] = []
+        self.saved: dict[str, str] = {}
+
+    async def get_observations(self, thread_id: str) -> str | None:
+        return self.stored
+
+    async def observe(self, thread_id, messages, model, context_window, **kwargs):
+        self.observe_calls.append({
+            "thread_id": thread_id,
+            "messages": messages,
+            "model": model,
+            "context_window": context_window,
+        })
+
+
+class TestObservableMemoryHandler:
+
+    def _make_handler(self, stored: str | None = None):
+        from headroom.observable_memory import ObservableMemoryConfig
+        from headroom.proxy.observable_memory_handler import ObservableMemoryHandler, ProxyLLMBridge
+
+        config = ObservableMemoryConfig(enabled=True, observer_model="gpt-4o-mini")
+        bridge = ProxyLLMBridge(api_key="sk-test")
+        handler = ObservableMemoryHandler(config=config, llm=bridge)
+        # Replace internal processor with fake
+        handler._proc = FakeProc(stored=stored)
+        return handler
+
+    # --- inject_observations ---
+
+    @pytest.mark.asyncio
+    async def test_inject_observations_anthropic_appends_to_system(self):
+        handler = self._make_handler(stored="* 🔴 (14:30) user prefers Python")
+        body = {"system": "You are a helpful assistant.", "messages": []}
+        await handler.inject_observations("thread-1", body, provider="anthropic")
+        assert "<memory>" in body["system"]
+        assert "user prefers Python" in body["system"]
+        assert body["system"].startswith("You are a helpful assistant.")
+
+    @pytest.mark.asyncio
+    async def test_inject_observations_anthropic_no_existing_system(self):
+        handler = self._make_handler(stored="* 🔴 (14:30) test obs")
+        body = {"messages": []}
+        await handler.inject_observations("thread-1", body, provider="anthropic")
+        assert body["system"] == "<memory>\n* 🔴 (14:30) test obs\n</memory>"
+
+    @pytest.mark.asyncio
+    async def test_inject_observations_openai_appends_to_system_message(self):
+        handler = self._make_handler(stored="* 🟡 (14:30) working on feature X")
+        body = {"messages": [
+            {"role": "system", "content": "You are helpful."},
+            {"role": "user", "content": "Hello"},
+        ]}
+        await handler.inject_observations("thread-1", body, provider="openai")
+        sys_msg = body["messages"][0]
+        assert "<memory>" in sys_msg["content"]
+        assert "working on feature X" in sys_msg["content"]
+
+    @pytest.mark.asyncio
+    async def test_inject_observations_openai_no_system_prepends(self):
+        handler = self._make_handler(stored="* 🟢 (14:30) background fact")
+        body = {"messages": [{"role": "user", "content": "Hello"}]}
+        await handler.inject_observations("thread-1", body, provider="openai")
+        assert body["messages"][0]["role"] == "system"
+        assert "<memory>" in body["messages"][0]["content"]
+
+    @pytest.mark.asyncio
+    async def test_inject_observations_noop_when_no_observations(self):
+        handler = self._make_handler(stored=None)
+        body = {"system": "You are helpful.", "messages": []}
+        original_system = body["system"]
+        await handler.inject_observations("thread-1", body, provider="anthropic")
+        assert body["system"] == original_system  # unchanged
+
+    # --- schedule_observe ---
+
+    @pytest.mark.asyncio
+    async def test_schedule_observe_creates_task(self):
+        import asyncio
+        handler = self._make_handler()
+        messages = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}]
+
+        handler.schedule_observe(
+            thread_id="thread-1",
+            messages=messages,
+            model="claude-opus-4-6",
+            context_window=128_000,
+        )
+
+        # Give the event loop a tick to run the created task
+        await asyncio.sleep(0)
+        proc: FakeProc = handler._proc  # type: ignore
+        assert len(proc.observe_calls) == 1
+        assert proc.observe_calls[0]["thread_id"] == "thread-1"
+        assert proc.observe_calls[0]["model"] == "claude-opus-4-6"
