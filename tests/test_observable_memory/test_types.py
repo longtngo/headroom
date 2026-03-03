@@ -1,9 +1,6 @@
 """Tests for Observable Memory core types."""
 from __future__ import annotations
 
-import asyncio
-from dataclasses import dataclass
-
 import pytest
 
 from headroom.observable_memory.types import (
@@ -18,7 +15,7 @@ class FakeLLM:
     """Minimal LLMProvider implementation for testing."""
 
     async def complete(self, system: str, prompt: str, model: str) -> str:
-        return f"<observations>test</observations>"
+        return "<observations>test</observations>"
 
     def count_tokens(self, text: str, model: str) -> int:
         return len(text.split())
@@ -51,12 +48,13 @@ def test_config_defaults():
     assert config.max_queue_depth == 50
     assert config.db_path == ":memory:"
     assert config.min_context_window == 8_000
+    assert config.instruction is None
 
 
 def test_llm_provider_protocol():
     """FakeLLM satisfies the LLMProvider Protocol."""
-    llm: LLMProvider = FakeLLM()  # type: ignore[assignment]
-    assert isinstance(llm, FakeLLM)
+    llm = FakeLLM()
+    assert isinstance(llm, LLMProvider)  # exercises @runtime_checkable
 
 
 @pytest.mark.asyncio

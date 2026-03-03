@@ -1,8 +1,8 @@
 """Core types for Observable Memory."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Protocol, runtime_checkable
+from dataclasses import dataclass
+from typing import Protocol, runtime_checkable
 
 
 @runtime_checkable
