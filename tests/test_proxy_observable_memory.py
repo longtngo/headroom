@@ -411,9 +411,9 @@ class TestAnthropicHandlerObservableMemory:
         proxy = HeadroomProxy(config)
 
         # Inject a fake handler whose processor has stored observations
-        from headroom.proxy.observable_memory_handler import ObservableMemoryHandler, ProxyLLMBridge
         from headroom.observable_memory import ObservableMemoryConfig, ObservableMemoryProcessor
         from headroom.observable_memory.store import InMemoryObservationStore
+        from headroom.proxy.observable_memory_handler import ObservableMemoryHandler, ProxyLLMBridge
 
         store = InMemoryObservationStore()
         await store.save("test-thread", "* 🔴 (14:30) user prefers Python")
@@ -445,7 +445,6 @@ class TestAnthropicHandlerObservableMemory:
         proxy.http_client = MagicMock()
         proxy.http_client.post = fake_post
 
-        import io
         body = {
             "model": "claude-opus-4-6",
             "system": "You are a helpful assistant.",
@@ -477,3 +476,83 @@ class TestAnthropicHandlerObservableMemory:
         assert "<memory>" in forwarded_system
         assert "user prefers Python" in forwarded_system
         assert "You are a helpful assistant." in forwarded_system
+
+    @pytest.mark.asyncio
+    async def test_schedule_observe_called_after_response(self, monkeypatch):
+        """After the proxy handles a response, schedule_observe is called with the thread_id."""
+        import asyncio
+        import json
+        from unittest.mock import MagicMock
+
+        from starlette.requests import Request
+
+        from headroom.proxy.server import HeadroomProxy, HeadroomProxyConfig
+
+        # Build proxy with OM enabled
+        config = HeadroomProxyConfig(
+            optimize=False,
+            observable_memory_enabled=True,
+            observable_memory_observer_model="claude-haiku-4-5-20251001",
+        )
+        proxy = HeadroomProxy(config)
+
+        # Inject a fake handler using FakeProc so we can capture observe calls
+        from headroom.observable_memory import ObservableMemoryConfig
+        from headroom.proxy.observable_memory_handler import ObservableMemoryHandler, ProxyLLMBridge
+
+        om_config = ObservableMemoryConfig(enabled=True)
+        bridge = ProxyLLMBridge(api_key="sk-test")
+        handler = ObservableMemoryHandler(config=om_config, llm=bridge)
+        proc = FakeProc(stored=None)
+        handler._proc = proc
+        proxy.observable_memory_handler = handler
+
+        # Stub the upstream HTTP call
+        async def fake_post(url, json=None, headers=None):
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.json.return_value = {
+                "id": "msg_test",
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "text", "text": "Hello!"}],
+                "model": "claude-opus-4-6",
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+            }
+            return mock_resp
+
+        proxy.http_client = MagicMock()
+        proxy.http_client.post = fake_post
+
+        body = {
+            "model": "claude-opus-4-6",
+            "system": "You are a helpful assistant.",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "max_tokens": 100,
+        }
+        body_bytes = json.dumps(body).encode()
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/v1/messages",
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body_bytes)).encode()),
+                (b"x-api-key", b"sk-test"),
+                (b"x-headroom-thread-id", b"test-thread"),
+            ],
+        }
+
+        async def receive():
+            return {"type": "http.request", "body": body_bytes}
+
+        request = Request(scope, receive)
+        await proxy.handle_anthropic_messages(request)
+
+        # Give the event loop a tick so the background observe task can run
+        await asyncio.sleep(0)
+
+        assert len(proc.observe_calls) == 1
+        assert proc.observe_calls[0]["thread_id"] == "test-thread"

@@ -1884,6 +1884,7 @@ class HeadroomProxy:
                             )
 
         # Observable Memory: inject stored observations into system prompt
+        # NOTE: schedule_observe is only wired for the non-streaming direct Anthropic path (streaming and Bedrock paths are not yet supported).
         om_thread_id: str | None = None
         if self.observable_memory_handler:
             from headroom.proxy.observable_memory_handler import resolve_thread_id
@@ -2200,7 +2201,7 @@ class HeadroomProxy:
                             context_limit = self.anthropic_provider.get_context_limit(model)
                             self.observable_memory_handler.schedule_observe(
                                 thread_id=om_thread_id,
-                                messages=list(messages) + [{"role": "assistant", "content": _om_reply}],
+                                messages=list(optimized_messages) + [{"role": "assistant", "content": _om_reply}],
                                 model=model,
                                 context_window=context_limit,
                             )
