@@ -85,7 +85,6 @@ from headroom.config import (
 from headroom.dashboard import get_dashboard_html
 from headroom.providers import AnthropicProvider, OpenAIProvider
 from headroom.proxy.memory_handler import MemoryConfig, MemoryHandler
-from headroom.proxy.observable_memory_handler import ObservableMemoryHandler, ProxyLLMBridge
 from headroom.telemetry import get_telemetry_collector
 from headroom.telemetry.toin import get_toin
 from headroom.tokenizers import get_tokenizer
@@ -1273,6 +1272,10 @@ class HeadroomProxy:
         self.observable_memory_handler: ObservableMemoryHandler | None = None
         if config.observable_memory_enabled:
             from headroom.observable_memory import ObservableMemoryConfig
+            from headroom.proxy.observable_memory_handler import (
+                ObservableMemoryHandler,
+                ProxyLLMBridge,
+            )
 
             om_config = ObservableMemoryConfig(
                 enabled=True,

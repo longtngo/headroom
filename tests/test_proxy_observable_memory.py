@@ -372,6 +372,7 @@ class TestProxyConfig:
         config = HeadroomProxyConfig(
             observable_memory_enabled=True,
             observable_memory_observer_model="claude-haiku-4-5-20251001",
+            observable_memory_reflector_model="claude-haiku-4-5-20251001",
             observable_memory_db_path="/tmp/om.db",
             observable_memory_message_threshold_ratio=0.3,
             observable_memory_observation_threshold_ratio=0.4,
@@ -380,4 +381,9 @@ class TestProxyConfig:
         )
         assert config.observable_memory_enabled is True
         assert config.observable_memory_observer_model == "claude-haiku-4-5-20251001"
+        assert config.observable_memory_reflector_model == "claude-haiku-4-5-20251001"
         assert config.observable_memory_db_path == "/tmp/om.db"
+        assert config.observable_memory_message_threshold_ratio == 0.3
+        assert config.observable_memory_observation_threshold_ratio == 0.4
+        assert config.observable_memory_instruction == "Focus on errors."
+        assert config.observable_memory_observer_api_key == "sk-other"
