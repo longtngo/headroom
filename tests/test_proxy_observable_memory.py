@@ -387,3 +387,93 @@ class TestProxyConfig:
         assert config.observable_memory_observation_threshold_ratio == 0.4
         assert config.observable_memory_instruction == "Focus on errors."
         assert config.observable_memory_observer_api_key == "sk-other"
+
+
+class TestAnthropicHandlerObservableMemory:
+    """Integration test: OM observations injected into Anthropic requests."""
+
+    @pytest.mark.asyncio
+    async def test_observations_injected_into_system_prompt(self, monkeypatch):
+        """When OM has stored observations, they appear in the forwarded request body."""
+        import json
+        from unittest.mock import MagicMock
+
+        from starlette.requests import Request
+
+        from headroom.proxy.server import HeadroomProxy, HeadroomProxyConfig
+
+        # Build proxy with OM enabled
+        config = HeadroomProxyConfig(
+            optimize=False,
+            observable_memory_enabled=True,
+            observable_memory_observer_model="claude-haiku-4-5-20251001",
+        )
+        proxy = HeadroomProxy(config)
+
+        # Inject a fake handler whose processor has stored observations
+        from headroom.proxy.observable_memory_handler import ObservableMemoryHandler, ProxyLLMBridge
+        from headroom.observable_memory import ObservableMemoryConfig, ObservableMemoryProcessor
+        from headroom.observable_memory.store import InMemoryObservationStore
+
+        store = InMemoryObservationStore()
+        await store.save("test-thread", "* 🔴 (14:30) user prefers Python")
+
+        om_config = ObservableMemoryConfig(enabled=True)
+        bridge = ProxyLLMBridge(api_key="sk-test")
+        handler = ObservableMemoryHandler(config=om_config, llm=bridge)
+        handler._proc = ObservableMemoryProcessor(config=om_config, llm=bridge, store=store)
+        proxy.observable_memory_handler = handler
+
+        # Capture the body forwarded to the upstream API
+        forwarded_bodies = []
+
+        async def fake_post(url, json=None, headers=None):
+            forwarded_bodies.append(json)
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.json.return_value = {
+                "id": "msg_test",
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "text", "text": "Hello!"}],
+                "model": "claude-opus-4-6",
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+            }
+            return mock_resp
+
+        proxy.http_client = MagicMock()
+        proxy.http_client.post = fake_post
+
+        import io
+        body = {
+            "model": "claude-opus-4-6",
+            "system": "You are a helpful assistant.",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "max_tokens": 100,
+        }
+        body_bytes = json.dumps(body).encode()
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/v1/messages",
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body_bytes)).encode()),
+                (b"x-api-key", b"sk-test"),
+                (b"x-headroom-thread-id", b"test-thread"),
+            ],
+        }
+
+        async def receive():
+            return {"type": "http.request", "body": body_bytes}
+
+        request = Request(scope, receive)
+        await proxy.handle_anthropic_messages(request)
+
+        assert len(forwarded_bodies) == 1
+        forwarded_system = forwarded_bodies[0].get("system", "")
+        assert "<memory>" in forwarded_system
+        assert "user prefers Python" in forwarded_system
+        assert "You are a helpful assistant." in forwarded_system

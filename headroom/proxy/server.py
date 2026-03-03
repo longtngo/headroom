@@ -1883,6 +1883,26 @@ class HeadroomProxy:
                                 f"[{request_id}] Memory: Added beta header: {key}={headers[key]}"
                             )
 
+        # Observable Memory: inject stored observations into system prompt
+        om_thread_id: str | None = None
+        if self.observable_memory_handler:
+            from headroom.proxy.observable_memory_handler import resolve_thread_id
+
+            om_thread_id = resolve_thread_id(
+                headers=headers,
+                messages=messages,
+                body=body,
+                user_id=headers.get("x-headroom-user-id"),
+            )
+            if om_thread_id:
+                try:
+                    await self.observable_memory_handler.inject_observations(
+                        om_thread_id, body, provider="anthropic"
+                    )
+                    logger.debug(f"[{request_id}] ObservableMemory: injected observations for thread={om_thread_id}")
+                except Exception as e:
+                    logger.warning(f"[{request_id}] ObservableMemory: inject failed: {e}")
+
         # Query Echo: re-inject user's question after compressed tool outputs
         # Helps LLM attend to the question after reading dense compressed data
         if tokens_saved > 0:
@@ -2167,6 +2187,25 @@ class HeadroomProxy:
                     except Exception as e:
                         logger.warning(f"[{request_id}] Memory: Tool call handling failed: {e}")
                         # Continue with original response
+
+                # Observable Memory: schedule background observation
+                if self.observable_memory_handler and om_thread_id:
+                    try:
+                        # Extract assistant reply text from response
+                        _om_reply = ""
+                        for _block in (resp_json or {}).get("content", []):
+                            if isinstance(_block, dict) and _block.get("type") == "text":
+                                _om_reply += _block.get("text", "")
+                        if _om_reply:
+                            context_limit = self.anthropic_provider.get_context_limit(model)
+                            self.observable_memory_handler.schedule_observe(
+                                thread_id=om_thread_id,
+                                messages=list(messages) + [{"role": "assistant", "content": _om_reply}],
+                                model=model,
+                                context_window=context_limit,
+                            )
+                    except Exception as e:
+                        logger.debug(f"[{request_id}] ObservableMemory: schedule_observe failed: {e}")
 
                 total_latency = (time.time() - start_time) * 1000
 
