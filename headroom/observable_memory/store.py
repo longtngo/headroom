@@ -6,6 +6,7 @@ Two implementations:
 """
 from __future__ import annotations
 
+import asyncio
 import time
 from abc import ABC, abstractmethod
 from typing import Any
@@ -50,6 +51,9 @@ class ObservationStore(ABC):
         """
         ...
 
+    async def close(self) -> None:  # noqa: B027 – intentional no-op default, not abstract
+        """Release any resources held by the store. No-op by default."""
+
 
 class InMemoryObservationStore(ObservationStore):
     """Ephemeral in-memory store. Useful for testing and short-lived processes."""
@@ -80,22 +84,24 @@ class SQLiteObservationStore(ObservationStore):
     def __init__(self, db_path: str = ":memory:") -> None:
         self._db_path = db_path
         self._conn: Any = None  # aiosqlite.Connection, lazily initialised
+        self._lock = asyncio.Lock()
 
     async def _get_conn(self) -> Any:
-        if self._conn is None:
-            import aiosqlite
+        async with self._lock:
+            if self._conn is None:
+                import aiosqlite  # deferred: only required when observable-memory extra is installed
 
-            self._conn = await aiosqlite.connect(self._db_path)
-            await self._conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS observations (
-                    thread_id  TEXT PRIMARY KEY,
-                    data       TEXT NOT NULL,
-                    updated_at REAL NOT NULL
+                self._conn = await aiosqlite.connect(self._db_path)
+                await self._conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS observations (
+                        thread_id  TEXT PRIMARY KEY,
+                        data       TEXT NOT NULL,
+                        updated_at REAL NOT NULL
+                    )
+                    """
                 )
-                """
-            )
-            await self._conn.commit()
+                await self._conn.commit()
         return self._conn
 
     async def load(self, thread_id: str) -> str | None:
