@@ -1286,7 +1286,7 @@ class HeadroomProxy:
                 observation_threshold_ratio=config.observable_memory_observation_threshold_ratio,
                 instruction=config.observable_memory_instruction,
             )
-            om_api_key = config.observable_memory_observer_api_key or getattr(config, "api_key", "")
+            om_api_key = config.observable_memory_observer_api_key or ""
             om_bridge = ProxyLLMBridge(api_key=om_api_key)
             self.observable_memory_handler = ObservableMemoryHandler(
                 config=om_config, llm=om_bridge
