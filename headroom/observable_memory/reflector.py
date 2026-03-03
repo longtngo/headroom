@@ -7,6 +7,7 @@ memory that serves as the assistant's complete record of past interactions.
 from __future__ import annotations
 
 import re
+from typing import Literal
 
 from .observer import (
     OBSERVER_EXTRACTION_INSTRUCTIONS,
@@ -87,6 +88,9 @@ def build_reflector_system_prompt(instruction: str | None = None) -> str:
     Returns:
         Full system prompt string.
     """
+    # Note: The TypeScript source includes a "THREAD ATTRIBUTION" section for
+    # multi-thread observations. This is intentionally omitted in Phase 1 (single-thread
+    # only). Add when multi-thread support is implemented.
     prompt = f"""You are the memory consciousness of an AI assistant. Your memory observation reflections will be the ONLY information the assistant has about past interactions with this user.
 
 The following instructions were given to another part of your psyche (the observer) to create memories.
@@ -161,7 +165,7 @@ REFLECTOR_SYSTEM_PROMPT = build_reflector_system_prompt()
 def build_reflector_prompt(
     observations: str,
     manual_prompt: str | None = None,
-    compression_level: int = 0,
+    compression_level: Literal[0, 1, 2, 3] = 0,
     skip_continuation_hints: bool = False,
 ) -> str:
     """Build the user-turn prompt for the Reflector agent.
@@ -237,6 +241,10 @@ def parse_reflector_output(raw_text: str) -> ReflectorResult:
     # Extract <suggested-response> (Reflector's currentTask is NOT used —
     # thread metadata preserves per-thread tasks)
     suggested_continuation: str | None = None
+    # Note: line-anchored regex matches the pattern established in observer.py.
+    # This prevents inline mentions like "the <suggested-response> format" from
+    # being captured. Risk: if LLM emits the tag mid-line after preamble text,
+    # it will be silently skipped. Acceptable trade-off for Phase 1.
     sr_match = re.search(
         r"^[ \t]*<suggested-response>([\s\S]*?)^[ \t]*</suggested-response>",
         raw_text,

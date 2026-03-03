@@ -151,3 +151,15 @@ def test_validate_compression_failure():
 def test_validate_compression_exactly_at_threshold():
     # Must be strictly BELOW threshold
     assert validate_compression(reflected_tokens=1000, target_threshold=1000) is False
+
+
+def test_build_reflector_prompt_compression_level_clamped_high():
+    """Level 99 clamps to 3 (CRITICAL)."""
+    prompt = build_reflector_prompt("obs", compression_level=99)
+    assert "CRITICAL" in prompt.upper()
+
+
+def test_build_reflector_prompt_compression_level_clamped_low():
+    """Level -1 clamps to 0 (no compression guidance)."""
+    prompt = build_reflector_prompt("obs", compression_level=-1)
+    assert "COMPRESSION" not in prompt.upper()
