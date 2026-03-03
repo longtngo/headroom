@@ -204,10 +204,10 @@ class TestObservableMemoryObserverFlow:
         # Unique token that only appears in turn 1, not turn 2
         unique_fact = f"CODEWORD{int(time.time())}"
 
-        # Turn 1 — plant a unique fact
+        # Turn 1 — plant a unique fact using neutral language
         resp1 = _anthropic_request(
             client,
-            [{"role": "user", "content": f"The secret codeword is {unique_fact}. Just say 'noted'."}],
+            [{"role": "user", "content": f"My project tracking number is {unique_fact}. Just say 'got it'."}],
             thread_id=thread_id,
             api_key=ANTHROPIC_API_KEY,
         )
@@ -218,10 +218,10 @@ class TestObservableMemoryObserverFlow:
         obs = _load_observations(db_path, thread_id)
         assert obs is not None, "Observation must be stored before turn 2"
 
-        # Turn 2 — fresh messages with NO mention of the codeword
+        # Turn 2 — fresh messages with NO mention of the tracking number
         resp2 = _anthropic_request(
             client,
-            [{"role": "user", "content": "What is the secret codeword? Check your memory context."}],
+            [{"role": "user", "content": "What is my project tracking number? Check your memory context."}],
             thread_id=thread_id,
             api_key=ANTHROPIC_API_KEY,
             max_tokens=200,
@@ -230,7 +230,7 @@ class TestObservableMemoryObserverFlow:
 
         text = _get_text(resp2.json())
         assert unique_fact in text, (
-            f"Expected codeword {unique_fact!r} in turn-2 response (injected via <memory>), got: {text!r}"
+            f"Expected tracking number {unique_fact!r} in turn-2 response (injected via <memory>), got: {text!r}"
         )
 
     def test_no_crash_when_thread_id_not_in_header(self, om_client):
@@ -266,21 +266,21 @@ class TestObservableMemoryThreadIsolation:
         ts = int(time.time())
         thread_a = f"thread-a-{ts}"
         thread_b = f"thread-b-{ts}"
-        secret = f"TOPSECRET{ts}"
+        project_id = f"PROJ{ts}"
 
-        # Thread A — plant a secret
+        # Thread A — establish a unique project fact
         resp_a = _anthropic_request(
             client,
-            [{"role": "user", "content": f"My secret is {secret}. Say 'stored'."}],
+            [{"role": "user", "content": f"I am working on project {project_id}, a Python microservice. Acknowledge briefly."}],
             thread_id=thread_a,
             api_key=ANTHROPIC_API_KEY,
         )
         assert resp_a.status_code == 200
 
-        # Thread B — completely separate conversation
+        # Thread B — completely separate conversation, no mention of project_id
         resp_b = _anthropic_request(
             client,
-            [{"role": "user", "content": "Hello, say hi."}],
+            [{"role": "user", "content": "I am working on a JavaScript frontend. Acknowledge briefly."}],
             thread_id=thread_b,
             api_key=ANTHROPIC_API_KEY,
         )
@@ -288,18 +288,18 @@ class TestObservableMemoryThreadIsolation:
 
         time.sleep(_OBSERVER_WAIT_S)
 
-        # Thread A should have observations containing the secret
+        # Thread A should have observations containing the project ID
         obs_a = _load_observations(db_path, thread_a)
         assert obs_a is not None, "Thread A should have observations"
-        assert secret in obs_a, (
-            f"Thread A observations should mention {secret!r}: {obs_a!r}"
+        assert project_id in obs_a, (
+            f"Thread A observations should mention {project_id!r}: {obs_a!r}"
         )
 
-        # Thread B's observations (if any) must NOT contain thread A's secret
+        # Thread B's observations (if any) must NOT contain thread A's project ID
         obs_b = _load_observations(db_path, thread_b)
         if obs_b:
-            assert secret not in obs_b, (
-                f"Thread B should not see thread A's secret. Got: {obs_b!r}"
+            assert project_id not in obs_b, (
+                f"Thread B should not see thread A's project ID. Got: {obs_b!r}"
             )
 
     def test_same_thread_id_accumulates_observations(self, om_client):
@@ -309,7 +309,7 @@ class TestObservableMemoryThreadIsolation:
 
         resp1 = _anthropic_request(
             client,
-            [{"role": "user", "content": "Turn one message. Say ok."}],
+            [{"role": "user", "content": "I am debugging a memory leak in a Python asyncio service. The leak appears in the connection pool. Acknowledge briefly."}],
             thread_id=thread_id,
             api_key=ANTHROPIC_API_KEY,
         )
@@ -319,7 +319,7 @@ class TestObservableMemoryThreadIsolation:
 
         resp2 = _anthropic_request(
             client,
-            [{"role": "user", "content": "Turn two message. Say ok."}],
+            [{"role": "user", "content": "We narrowed it down to the aiohttp session not being closed. Acknowledge briefly."}],
             thread_id=thread_id,
             api_key=ANTHROPIC_API_KEY,
         )

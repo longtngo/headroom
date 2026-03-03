@@ -157,8 +157,13 @@ class ObservableMemoryHandler:
         llm: ProxyLLMBridge,
     ) -> None:
         from headroom.observable_memory import ObservableMemoryProcessor
+        from headroom.observable_memory.store import SQLiteObservationStore
 
-        self._proc = ObservableMemoryProcessor(config=config, llm=llm)
+        store = None
+        if getattr(config, "db_path", ":memory:") != ":memory:":
+            store = SQLiteObservationStore(config.db_path)
+
+        self._proc = ObservableMemoryProcessor(config=config, llm=llm, store=store)
 
     @staticmethod
     def _append_memory_block(existing: str | list | Any, block: str) -> str | list:
