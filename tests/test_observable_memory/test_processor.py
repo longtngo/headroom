@@ -21,7 +21,7 @@ class FakeLLM:
         self.calls: list[str] = []
 
     async def complete(self, system: str, prompt: str, model: str) -> str:
-        # Detect call type by presence of "memory consciousness" in system
+        # Detect call type: reflector system prompt contains "reflector"
         if "reflector" in system.lower() or "reflection" in prompt.lower():
             self.calls.append("reflector")
             return self.reflector_response
