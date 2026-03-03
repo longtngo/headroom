@@ -1112,6 +1112,16 @@ headroom/
 ├── proxy/
 │   └── server.py        # Production HTTP proxy (CCR endpoints)
 │
+├── observable_memory/   # Proactive background compression (Observer/Reflector agents)
+│   ├── __init__.py          # Public API surface
+│   ├── types.py             # LLMProvider, ObserverResult, ReflectorResult, Config
+│   ├── token_counter.py     # tiktoken wrapper + singleton cache
+│   ├── store.py             # ObservationStore ABC + InMemory + SQLite
+│   ├── observer.py          # Observer prompts + message formatting + XML parsing
+│   ├── reflector.py         # Reflector prompts + compression levels + parsing
+│   ├── worker.py            # OMWorker + CircuitBreaker + abort signal
+│   └── processor.py         # ObservableMemoryProcessor (main entry point)
+│
 └── reporting/
     └── generator.py     # HTML report generation
 ```
