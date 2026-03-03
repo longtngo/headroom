@@ -295,6 +295,7 @@ response = client.chat.completions.create(
 - **[Configuration Reference](api.md)** - All configuration options
 - **[Transform Reference](transforms.md)** - How each transform works
 - **[Troubleshooting](troubleshooting.md)** - Common issues and solutions
+- **[Observable Memory](observable-memory.md)** - Proactive background compression for long sessions
 - **[Examples](../examples/)** - More complete examples
 
 ---

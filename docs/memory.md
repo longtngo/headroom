@@ -2,13 +2,29 @@
 
 **Hierarchical, temporal memory for LLM applications.** Enable your AI to remember across conversations with intelligent scoping and versioning.
 
-## Why Memory?
+## Observable Memory vs. Hierarchical Memory
+
+Headroom has two memory systems — they solve different problems:
+
+| | [Observable Memory](observable-memory.md) | Hierarchical Memory (this doc) |
+|---|---|---|
+| **Scope** | Single conversation | Across conversations |
+| **What it stores** | Observations about the current session | Long-term facts (preferences, decisions) |
+| **Where it runs** | Proxy (`--observable-memory`) | SDK (`with_memory()`) |
+| **Use case** | Long coding/agentic sessions | Personalization, user preferences |
+| **Persistence** | Optional (SQLite) | Always persistent |
+
+Use Observable Memory when a single session grows long. Use Hierarchical Memory when facts need to survive across sessions. They can also run together.
+
+---
+
+## Why Hierarchical Memory?
 
 LLMs have two fundamental limitations:
 1. **Context windows overflow** - Too much history, need to truncate
 2. **No persistence** - Every conversation starts from zero
 
-Memory solves both: **extract key facts, persist them, inject when relevant.**
+Hierarchical Memory solves both: **extract key facts, persist them, inject when relevant.**
 
 This is *temporal compression* - instead of carrying 10,000 tokens of conversation history, carry 100 tokens of extracted memories.
 

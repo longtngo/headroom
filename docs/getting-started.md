@@ -107,3 +107,4 @@ print(f"Transforms: {plan.transforms_applied}")
 - [Proxy Server Documentation](proxy.md) - Configure the proxy
 - [Transforms Reference](transforms.md) - Understand each transform
 - [API Reference](api.md) - Full API documentation
+- [Observable Memory](observable-memory.md) - Proactive compression for long-running sessions
