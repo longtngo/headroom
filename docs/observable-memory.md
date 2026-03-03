@@ -307,7 +307,7 @@ Date: Dec 4, 2025
 * 🔴 (14:30) User stated: prefers Python for backend services
 * 🔴 (14:32) ConfigurationError raised in proxy — missing OPENAI_API_KEY
 * 🟡 (14:35) Investigating rate-limit handling in the rolling window transform
-  * 🟢 (14:36) Found threshold is set to 0.9, which is too high for this model
+* 🟢 (14:36) Found threshold is set to 0.9, which is too high for this model
 * 🟢 (14:40) User prefers verbose logging during debugging sessions
 ```
 
@@ -435,6 +435,14 @@ The default `min_context_window` is 8,000 tokens. For small models, set it lower
 ```python
 config = ObservableMemoryConfig(min_context_window=2_000)
 ```
+
+---
+
+## Acknowledgements
+
+The Observer/Reflector architecture, system prompts, observation format (priority emoji, date grouping, thread attribution), and compression guidance levels are ported from [Mastra's `@mastra/memory` package](https://github.com/mastra-ai/mastra/tree/main/packages/memory). Mastra is an open-source TypeScript framework for building AI agents; their observational memory design is the direct inspiration for this module.
+
+The Python implementation adapts the original TypeScript closely — same prompt constants, same XML output format, same compression escalation logic — so that observations produced by one implementation are readable by the other.
 
 ---
 
