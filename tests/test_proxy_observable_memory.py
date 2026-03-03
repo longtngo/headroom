@@ -68,3 +68,17 @@ class TestProxyLLMBridge:
         bridge = ProxyLLMBridge(api_key="sk-test")
         result = await bridge.complete("sys", "prompt", "gpt-4o-mini")
         assert result == ""
+
+    @pytest.mark.asyncio
+    async def test_complete_propagates_litellm_error(self, monkeypatch):
+        from headroom.proxy.observable_memory_handler import ProxyLLMBridge
+
+        async def exploding_acompletion(**kwargs):
+            raise RuntimeError("network failure")
+
+        import litellm
+        monkeypatch.setattr(litellm, "acompletion", exploding_acompletion)
+
+        bridge = ProxyLLMBridge(api_key="sk-test")
+        with pytest.raises(RuntimeError, match="network failure"):
+            await bridge.complete("sys", "prompt", "gpt-4o")

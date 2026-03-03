@@ -14,10 +14,10 @@ Usage:
 """
 from __future__ import annotations
 
-import asyncio
-import hashlib
+import asyncio  # noqa: F401 — used by ObservableMemoryHandler (Task 3)
+import hashlib  # noqa: F401 — used by thread ID resolution (Task 2)
 import logging
-from typing import Any
+from typing import Any  # noqa: F401 — used by thread ID resolution (Task 2)
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +56,7 @@ class ProxyLLMBridge:
         return response.choices[0].message.content or ""
 
     def count_tokens(self, text: str, model: str) -> int:
+        """Count tokens using tiktoken. For non-OpenAI models, this is an approximation."""
         from headroom.observable_memory import count_string
 
         return count_string(text, model)
