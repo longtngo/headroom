@@ -203,3 +203,27 @@ class TestResolveThreadId:
             user_id=None,
         )
         assert result is not None
+
+    def test_empty_header_value_falls_through_to_hash(self):
+        """An explicitly empty header value should fall through to hash derivation."""
+        result = self._call(
+            headers={"x-headroom-thread-id": ""},
+            messages=[{"role": "user", "content": "hello"}],
+            body={"system": "sys"},
+        )
+        # Should derive a hash, not return empty string
+        assert result is not None
+        assert result != ""
+        assert len(result) == 16
+
+    def test_extract_text_content_null_text_field(self):
+        """Content blocks with text=null should not crash."""
+        result = self._call(
+            headers={},
+            messages=[{"role": "user", "content": [
+                {"type": "text", "text": None},
+                {"type": "text", "text": "real content"},
+            ]}],
+            body={},
+        )
+        assert result is not None

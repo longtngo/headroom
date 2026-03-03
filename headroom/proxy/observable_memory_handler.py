@@ -70,7 +70,7 @@ def _extract_text_content(content: Any) -> str:
         parts = []
         for block in content:
             if isinstance(block, dict) and block.get("type") == "text":
-                parts.append(block.get("text", ""))
+                parts.append(block.get("text") or "")
         return " ".join(parts)
     return ""
 
@@ -81,7 +81,7 @@ def _derive_thread_id(
     first_user_msg: str,
 ) -> str | None:
     """Derive a stable 16-char hex thread ID from conversation fingerprint."""
-    if not first_user_msg:
+    if not first_user_msg.strip():
         return None
     salt = user_id or "anonymous"
     fingerprint = f"{salt}|{system_text[:200]}|{first_user_msg[:300]}"
@@ -116,7 +116,7 @@ def resolve_thread_id(
     # 1–4: explicit headers (case-insensitive lookup)
     lower_headers = {k.lower(): v for k, v in headers.items()}
     for header in _THREAD_ID_HEADERS:
-        if val := lower_headers.get(header):
+        if val := lower_headers.get(header, "").strip():
             return val
 
     # 5: content hash fallback
