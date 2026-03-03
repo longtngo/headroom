@@ -140,6 +140,7 @@ Your App → Headroom → LLM Provider
 - Intelligent message scoring and dropping
 - Compress-Cache-Retrieve (CCR) for lossless compression
 - Provider cache alignment for better hit rates
+- Observable Memory: proactive background summarization via Observer/Reflector agents (opt-in)
 
 **Operations**
 
