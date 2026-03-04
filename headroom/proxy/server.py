@@ -4367,6 +4367,27 @@ class HeadroomProxy:
                         f"(saved {tokens_saved:,} tokens) via {self.anthropic_backend.name}"
                     )
 
+                # Observable Memory: schedule background observation for LiteLLM backend path
+                if self.observable_memory_handler and om_thread_id:
+                    try:
+                        resp_body = backend_response.body
+                        _om_reply = ""
+                        for _choice in resp_body.get("choices", []):
+                            _om_reply += _choice.get("message", {}).get("content", "") or ""
+                        if _om_reply:
+                            context_limit = self.openai_provider.get_context_limit(model)
+                            _om_usage = resp_body.get("usage", {}) or {}
+                            _om_tokens = _om_usage.get("prompt_tokens", 0) + _om_usage.get("completion_tokens", 0)
+                            self.observable_memory_handler.schedule_observe(
+                                thread_id=om_thread_id,
+                                messages=om_messages_snapshot + [{"role": "assistant", "content": _om_reply}],
+                                model=model,
+                                context_window=context_limit,
+                                current_token_count=_om_tokens if _om_tokens > 0 else None,
+                            )
+                    except Exception as e:
+                        logger.debug(f"[{request_id}] ObservableMemory: schedule_observe failed (backend): {e}")
+
                 return JSONResponse(
                     status_code=backend_response.status_code,
                     content=backend_response.body,

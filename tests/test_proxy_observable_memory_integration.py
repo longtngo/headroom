@@ -3,10 +3,14 @@
 Tests the full request/response cycle with a real proxy server and real SQLite storage.
 Two tiers:
   - Setup tests: no API key needed (health/stats only)
-  - Flow tests: require ANTHROPIC_API_KEY (observation stored, memory injected, thread isolation)
+  - Anthropic flow tests: require ANTHROPIC_API_KEY
+  - Ollama flow tests: require local Ollama with qwen3.5:9b-nothink + qwen2.5:7b
 
-Run all:
+Run all Anthropic tests:
     ANTHROPIC_API_KEY=... pytest tests/test_proxy_observable_memory_integration.py -v
+
+Run Ollama tests (no API key needed):
+    pytest tests/test_proxy_observable_memory_integration.py -v -k "Ollama"
 
 Run setup-only (no API key):
     pytest tests/test_proxy_observable_memory_integration.py -v -k "Setup"
@@ -17,6 +21,7 @@ import sqlite3
 import time
 from pathlib import Path
 
+import httpx
 import pytest
 
 pytest.importorskip("fastapi")
@@ -29,15 +34,39 @@ from headroom.proxy.server import ProxyConfig, create_app  # noqa: E402
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 
-# Cheap model for both observer and test requests
+# Cheap model for both observer and test requests (Anthropic path)
 OBSERVER_MODEL = "claude-haiku-4-5-20251001"
 TEST_MODEL = "claude-haiku-4-5-20251001"
+
+# Ollama models — qwen3.5:9b-nothink for main requests, qwen2.5:7b for the observer
+# (qwen2.5:7b has no thinking mode so observer cycles stay under ~10s each)
+OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_TEST_MODEL = "qwen3.5:9b-nothink"
+OLLAMA_OBSERVER_MODEL = "ollama/qwen2.5:7b"
+# Model name sent in the request body — LiteLLMBackend prepends "ollama/" automatically
+OPENAI_TEST_MODEL = OLLAMA_TEST_MODEL
+# qwen3.5 thinks before responding; 1200 tokens is enough for thinking + answer
+_OLLAMA_MAX_TOKENS = 1200
+# Observer (qwen2.5:7b) + optional reflector (also qwen2.5:7b) = ~15s; 25s is generous
+_OLLAMA_OBSERVER_WAIT_S = 25
 
 # Very low threshold so observer fires after even a single short message
 _LOW_THRESHOLD = 0.0001
 
-# How long to wait for the background observer LLM call to complete
+# How long to wait for the background observer LLM call to complete (Anthropic path)
 _OBSERVER_WAIT_S = 8
+
+
+def _is_ollama_model_available(base_url: str, model: str) -> bool:
+    """Return True if Ollama is running and the given model is pulled."""
+    try:
+        r = httpx.get(f"{base_url}/api/tags", timeout=2)
+        return r.status_code == 200 and model in r.text
+    except Exception:
+        return False
+
+
+OLLAMA_AVAILABLE = _is_ollama_model_available(OLLAMA_BASE_URL, OLLAMA_TEST_MODEL)
 
 
 # ---------------------------------------------------------------------------
@@ -86,6 +115,26 @@ def no_om_client():
         yield client
 
 
+@pytest.fixture
+def om_openai_client(temp_om_db):
+    """Proxy with OM enabled, routing /v1/chat/completions → Ollama via LiteLLM."""
+    config = ProxyConfig(
+        optimize=False,
+        cache_enabled=False,
+        rate_limit_enabled=False,
+        cost_tracking_enabled=False,
+        observable_memory_enabled=True,
+        observable_memory_observer_model=OLLAMA_OBSERVER_MODEL,
+        observable_memory_db_path=temp_om_db,
+        observable_memory_message_threshold_ratio=_LOW_THRESHOLD,
+        observable_memory_observation_threshold_ratio=_LOW_THRESHOLD,
+        backend="litellm-ollama",
+    )
+    app = create_app(config)
+    with TestClient(app) as client:
+        yield client, temp_om_db
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -122,6 +171,30 @@ def _load_observations(db_path, thread_id):
     ).fetchall()
     conn.close()
     return rows[0][0] if rows else None
+
+
+def _openai_request(client, messages, thread_id, api_key, max_tokens=150):
+    """Send an OpenAI-format /v1/chat/completions request through the proxy."""
+    return client.post(
+        "/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "x-headroom-thread-id": thread_id,
+        },
+        json={
+            "model": OPENAI_TEST_MODEL,
+            "max_tokens": max_tokens,
+            "messages": messages,
+        },
+    )
+
+
+def _get_openai_text(resp_json):
+    """Extract text from an OpenAI-format chat completion response."""
+    choices = resp_json.get("choices", [])
+    if choices:
+        return choices[0].get("message", {}).get("content", "") or ""
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -330,3 +403,166 @@ class TestObservableMemoryThreadIsolation:
         obs = _load_observations(db_path, thread_id)
         assert obs is not None, "Observations should exist after two turns"
         assert obs.strip(), "Observations should not be empty"
+
+
+# ---------------------------------------------------------------------------
+# OpenAI-format setup tests (no API key needed)
+# ---------------------------------------------------------------------------
+
+
+class TestObservableMemoryOpenAISetup:
+    """Proxy startup with OpenAI-format backend — no API key needed."""
+
+    def test_openai_proxy_starts_with_om_enabled(self, om_openai_client):
+        client, _ = om_openai_client
+        resp = client.get("/health")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "healthy"
+
+    def test_openai_stats_endpoint_works(self, om_openai_client):
+        client, _ = om_openai_client
+        resp = client.get("/stats")
+        assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# OpenAI-format observer flow tests (require ANTHROPIC_API_KEY)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(not OLLAMA_AVAILABLE, reason="Ollama with qwen3.5:9b-nothink not running")
+class TestObservableMemoryOpenAIFlow:
+    """Full observation cycle via /v1/chat/completions with LiteLLM → Ollama backend.
+
+    Uses qwen3.5:9b-nothink for main requests and qwen2.5:7b for the observer.
+    No API key required — runs entirely against local Ollama.
+    """
+
+    def test_openai_request_succeeds(self, om_openai_client):
+        """Basic sanity: an OpenAI-format request through an OM-enabled proxy returns 200."""
+        client, _ = om_openai_client
+        resp = _openai_request(
+            client,
+            [{"role": "user", "content": "Say hello."}],
+            thread_id="test-openai-basic",
+            api_key="ollama",
+            max_tokens=_OLLAMA_MAX_TOKENS,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "choices" in data
+        assert _get_openai_text(data)
+
+    def test_openai_observation_stored_after_request(self, om_openai_client):
+        """After an OpenAI-format request, the background observer stores observations in SQLite."""
+        client, db_path = om_openai_client
+        thread_id = f"test-openai-store-{int(time.time())}"
+
+        resp = _openai_request(
+            client,
+            [{"role": "user", "content": "I am building a GraphQL API called Stargate using Node.js 20. Acknowledge briefly."}],
+            thread_id=thread_id,
+            api_key="ollama",
+            max_tokens=_OLLAMA_MAX_TOKENS,
+        )
+        assert resp.status_code == 200
+
+        time.sleep(_OLLAMA_OBSERVER_WAIT_S)
+
+        obs = _load_observations(db_path, thread_id)
+        assert obs is not None, f"No observations stored for thread_id={thread_id!r}"
+        assert obs.strip(), "Stored observations should not be empty"
+
+    def test_openai_memory_injected_in_subsequent_request(self, om_openai_client):
+        """The <memory> block from prior turns is injected into the next OpenAI request's system message."""
+        client, db_path = om_openai_client
+        thread_id = f"test-openai-inject-{int(time.time())}"
+        unique_fact = f"TICKET{int(time.time())}"
+
+        # Turn 1 — plant a unique ticket number via OpenAI format
+        resp1 = _openai_request(
+            client,
+            [{"role": "user", "content": f"My support ticket number is {unique_fact}. Just say 'got it'."}],
+            thread_id=thread_id,
+            api_key="ollama",
+            max_tokens=_OLLAMA_MAX_TOKENS,
+        )
+        assert resp1.status_code == 200
+
+        # Wait for observer to store the observation
+        time.sleep(_OLLAMA_OBSERVER_WAIT_S)
+        obs = _load_observations(db_path, thread_id)
+        assert obs is not None, "Observation must be stored before turn 2"
+
+        # Turn 2 — fresh messages with NO mention of the ticket number
+        resp2 = _openai_request(
+            client,
+            [{"role": "user", "content": f"[ref:{thread_id}] What is my support ticket number? Check your memory context."}],
+            thread_id=thread_id,
+            api_key="ollama",
+            max_tokens=_OLLAMA_MAX_TOKENS,
+        )
+        assert resp2.status_code == 200
+
+        text = _get_openai_text(resp2.json())
+        assert unique_fact in text, (
+            f"Expected ticket number {unique_fact!r} in turn-2 response (injected via <memory>), got: {text!r}"
+        )
+
+    def test_openai_no_crash_without_thread_id(self, om_openai_client):
+        """OpenAI requests without an explicit thread ID succeed (content-hash fallback)."""
+        client, _ = om_openai_client
+        resp = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": "Bearer ollama",
+                # no x-headroom-thread-id header
+            },
+            json={
+                "model": OPENAI_TEST_MODEL,
+                "max_tokens": _OLLAMA_MAX_TOKENS,
+                "messages": [{"role": "user", "content": "Hello, respond briefly."}],
+            },
+        )
+        assert resp.status_code == 200
+
+    def test_openai_system_message_preserved_with_memory_injection(self, om_openai_client):
+        """When a system message is present and observations exist, the <memory> block is appended."""
+        client, db_path = om_openai_client
+        thread_id = f"test-openai-system-{int(time.time())}"
+        unique_fact = f"BUILD{int(time.time())}"
+
+        # Turn 1 — plant a fact
+        resp1 = _openai_request(
+            client,
+            [{"role": "user", "content": f"My build pipeline identifier is {unique_fact}. Acknowledge briefly."}],
+            thread_id=thread_id,
+            api_key="ollama",
+            max_tokens=_OLLAMA_MAX_TOKENS,
+        )
+        assert resp1.status_code == 200
+
+        time.sleep(_OLLAMA_OBSERVER_WAIT_S)
+        assert _load_observations(db_path, thread_id) is not None
+
+        # Turn 2 — include an explicit system message; memory should still be injected
+        resp2 = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": "Bearer ollama",
+                "x-headroom-thread-id": thread_id,
+            },
+            json={
+                "model": OPENAI_TEST_MODEL,
+                "max_tokens": _OLLAMA_MAX_TOKENS,
+                "messages": [
+                    {"role": "system", "content": "You are a helpful assistant with perfect memory."},
+                    {"role": "user", "content": f"[ref:{thread_id}] What is my build pipeline identifier? Check your memory context."},
+                ],
+            },
+        )
+        assert resp2.status_code == 200
+        text = _get_openai_text(resp2.json())
+        assert unique_fact in text, (
+            f"Expected {unique_fact!r} in response with explicit system message, got: {text!r}"
+        )
